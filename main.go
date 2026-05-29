@@ -27,6 +27,8 @@ func main() {
 		switch os.Args[2] {
 		case "ratelimit":
 			runRateLimitDemo()
+		case "priority":
+			runPriorityDemo()
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown demo: %s\n\n", os.Args[2])
 			printUsage()
@@ -45,7 +47,8 @@ func printUsage() {
 Usage:
   go run . worker           Start the worker (leave running in a separate terminal)
   go run . submit           Submit a single test order and wait for completion
-  go run . demo ratelimit   Flood the queue with 10 orders; watch 1/second drain`)
+  go run . demo ratelimit   Flood the queue with 10 orders; watch 1/second drain
+  go run . demo priority    Flood with low-priority orders, then jump the queue with a VIP order`)
 }
 
 // submitTestOrder submits one pizza order synchronously and prints the result.

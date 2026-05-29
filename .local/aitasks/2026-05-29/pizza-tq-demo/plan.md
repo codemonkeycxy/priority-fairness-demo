@@ -328,9 +328,183 @@ Expected: a new `Making pizza` line appears **exactly 1 second apart** even thou
 
 ---
 
+## Phase 5: Priority Demo
+
+The goal: flood the queue with 10 low-priority (priority 5) orders, wait a few seconds so the queue builds up, then submit 1 high-priority (priority 1) order. With the 1 RPS rate limit active, the high-priority order jumps ahead of all remaining low-priority orders in the queue.
+
+`temporal.Priority{PriorityKey: N}` is set on the **activity options** inside the workflow, so the server uses it when dispatching activity tasks from the queue. Range is 1-5 (1=highest, 5=lowest, default=3). The `temporal` package re-exports `internal.Priority`, so import `go.temporal.io/sdk/temporal` and use `PriorityKey int`.
+
+### Task 5a: Add PriorityKey to PizzaOrder and wire it through the workflow
+
+**Files:**
+- Modify: `pizza.go`
+
+- [ ] **Step 1: Add `PriorityKey int` to `PizzaOrder` and pass it to activity options**
+
+Updated `pizza.go`:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/workflow"
+)
+
+const TaskQueue = "pizza-orders"
+
+type PizzaOrder struct {
+	OrderID     string
+	CustomerID  string
+	Item        string
+	PriorityKey int // 1=highest priority, 5=lowest; 0 means use server default (3)
+}
+
+func PizzaOrderWorkflow(ctx workflow.Context, order PizzaOrder) error {
+	ao := workflow.ActivityOptions{
+		StartToCloseTimeout: 60 * time.Second,
+		Priority:            temporal.Priority{PriorityKey: order.PriorityKey},
+	}
+	ctx = workflow.WithActivityOptions(ctx, ao)
+	return workflow.ExecuteActivity(ctx, MakePizzaActivity, order).Get(ctx, nil)
+}
+
+func MakePizzaActivity(ctx context.Context, order PizzaOrder) error {
+	logger := activity.GetLogger(ctx)
+	logger.Info("Making pizza", "orderID", order.OrderID, "customer", order.CustomerID)
+
+	fmt.Printf("[%s] Making pizza  -- Order %-8s | Customer %-12s | %s\n",
+		time.Now().Format("15:04:05"), order.OrderID, order.CustomerID, order.Item)
+
+	//time.Sleep(3 * time.Second)
+
+	fmt.Printf("[%s] Pizza ready   -- Order %-8s | Customer %-12s\n",
+		time.Now().Format("15:04:05"), order.OrderID, order.CustomerID)
+	logger.Info("Pizza ready", "orderID", order.OrderID)
+	return nil
+}
+```
+
+---
+
+### Task 5b: Add runPriorityDemo to demo.go
+
+**Files:**
+- Modify: `demo.go`
+
+- [ ] **Step 1: Append `runPriorityDemo` to demo.go**
+
+Add after the existing `runRateLimitDemo` function:
+
+```go
+// runPriorityDemo floods the queue with 10 low-priority (priority 5) orders, waits
+// a few seconds for them to back up, then submits a single high-priority (priority 1)
+// order. With the 1 RPS rate limit active, the high-priority order should jump ahead
+// of the remaining low-priority orders in the queue.
+func runPriorityDemo() {
+	c := newTemporalClient()
+	defer c.Close()
+
+	fmt.Println("=== Priority Demo ===")
+	fmt.Println("Step 1: Flooding queue with 10 low-priority (priority 5) orders...")
+	fmt.Println()
+	for i := 1; i <= 10; i++ {
+		submitOrder(c, PizzaOrder{
+			OrderID:     fmt.Sprintf("prio-%02d", i),
+			CustomerID:  fmt.Sprintf("customer-%02d", i),
+			Item:        "Margherita",
+			PriorityKey: 5,
+		})
+	}
+
+	fmt.Println()
+	fmt.Println("Waiting 3 seconds for the queue to build up...")
+	time.Sleep(3 * time.Second)
+
+	fmt.Println()
+	fmt.Println("Step 2: Submitting 1 high-priority (priority 1) VIP order...")
+	submitOrder(c, PizzaOrder{
+		OrderID:     "prio-vip",
+		CustomerID:  "vip-customer",
+		Item:        "Truffle Pizza",
+		PriorityKey: 1,
+	})
+	fmt.Println()
+	fmt.Println("VIP order submitted. Switch to the worker terminal.")
+	fmt.Println("The VIP order should start next, jumping ahead of the remaining low-priority orders.")
+}
+```
+
+Note: `time` is already imported via `runRateLimitDemo`'s package imports — confirm the import block includes it.
+
+---
+
+### Task 5c: Add `demo priority` subcommand to main.go
+
+**Files:**
+- Modify: `main.go`
+
+- [ ] **Step 1: Add `priority` case inside the `demo` switch and update usage string**
+
+In the `demo` switch, add:
+```go
+case "priority":
+    runPriorityDemo()
+```
+
+Updated usage string:
+```
+  go run . demo ratelimit   Flood the queue with 10 orders; watch 1/second drain
+  go run . demo priority    Flood with low-priority orders, then jump the queue with a VIP order
+```
+
+---
+
+### Task 5d: Build and verify
+
+- [ ] **Step 1: Build**
+
+```bash
+go build ./...
+```
+
+Expected: clean, no errors.
+
+---
+
+## Phase 5 Verification
+
+- [ ] **Step 1: Start worker (or restart if already running)**
+
+```bash
+go run . worker
+```
+
+The worker must be restarted to apply `TaskQueueActivitiesPerSecond: 1` if it was changed.
+
+- [ ] **Step 2: Run the priority demo**
+
+```bash
+go run . demo priority
+```
+
+- [ ] **Step 3: Observe worker terminal**
+
+Expected behavior:
+- Seconds 0-3: low-priority orders start at 1/second (`customer-01`, `customer-02`, `customer-03`)
+- At ~3s: VIP order is submitted
+- Next order to start: `vip-customer` (Truffle Pizza) — jumps ahead of `customer-04` through `customer-10`
+- After the VIP, remaining low-priority orders resume at 1/second
+
+---
+
 ## Future Phases (planned separately)
 
-- **Phase 5: Priority demo** — add `PriorityKey` to `PizzaOrder`, set on activity options, add `demo priority` command
 - **Phase 6: Fairness demo** — add `FairnessKey` to `PizzaOrder`, set on activity options, add `demo fairness` command
 
 ---

@@ -6,20 +6,23 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
 
 const TaskQueue = "pizza-orders"
 
 type PizzaOrder struct {
-	OrderID    string
-	CustomerID string
-	Item       string
+	OrderID     string
+	CustomerID  string
+	Item        string
+	PriorityKey int // 1=highest priority, 5=lowest; 0 uses server default (3)
 }
 
 func PizzaOrderWorkflow(ctx workflow.Context, order PizzaOrder) error {
 	ao := workflow.ActivityOptions{
 		StartToCloseTimeout: 60 * time.Second,
+		Priority:            temporal.Priority{PriorityKey: order.PriorityKey},
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 	return workflow.ExecuteActivity(ctx, MakePizzaActivity, order).Get(ctx, nil)
