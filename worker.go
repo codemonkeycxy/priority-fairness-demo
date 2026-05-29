@@ -14,7 +14,11 @@ func runWorker() {
 	}
 	defer c.Close()
 
-	w := worker.New(c, TaskQueue, worker.Options{})
+	w := worker.New(c, TaskQueue, worker.Options{
+		// Throttle activity dispatch to 1/second at the server level, simulating
+		// a kitchen that can only start 1 pizza per second regardless of queue depth.
+		TaskQueueActivitiesPerSecond: 1,
+	})
 	w.RegisterWorkflow(PizzaOrderWorkflow)
 	w.RegisterActivity(MakePizzaActivity)
 

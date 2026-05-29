@@ -19,6 +19,19 @@ func main() {
 		runWorker()
 	case "submit":
 		submitTestOrder()
+	case "demo":
+		if len(os.Args) < 3 {
+			printUsage()
+			os.Exit(1)
+		}
+		switch os.Args[2] {
+		case "ratelimit":
+			runRateLimitDemo()
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown demo: %s\n\n", os.Args[2])
+			printUsage()
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", os.Args[1])
 		printUsage()
@@ -30,8 +43,9 @@ func printUsage() {
 	fmt.Println(`Pizza Store Task Queue Demo
 
 Usage:
-  go run . worker    Start the worker (keep running in a separate terminal)
-  go run . submit    Submit a single test pizza order and wait for it to finish`)
+  go run . worker           Start the worker (leave running in a separate terminal)
+  go run . submit           Submit a single test order and wait for completion
+  go run . demo ratelimit   Flood the queue with 10 orders; watch 1/second drain`)
 }
 
 // submitTestOrder submits one pizza order synchronously and prints the result.
