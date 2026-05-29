@@ -29,6 +29,8 @@ func main() {
 			runRateLimitDemo()
 		case "priority":
 			runPriorityDemo()
+		case "fairness":
+			runFairnessDemo()
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown demo: %s\n\n", os.Args[2])
 			printUsage()
@@ -48,7 +50,13 @@ Usage:
   go run . worker           Start the worker (leave running in a separate terminal)
   go run . submit           Submit a single test order and wait for completion
   go run . demo ratelimit   Flood the queue with 10 orders; watch 1/second drain
-  go run . demo priority    Flood with low-priority orders, then jump the queue with a VIP order`)
+  go run . demo priority    Flood with low-priority orders, then jump the queue with a VIP order
+  go run . demo fairness    Flood with Alice's orders, then show Bob jumping the queue
+
+Server setup (required for priority and fairness demos):
+  temporal server start-dev \
+    --dynamic-config-value "matching.useNewMatcher=true" \
+    --dynamic-config-value "matching.enableFairness=true"`)
 }
 
 // submitTestOrder submits one pizza order synchronously and prints the result.

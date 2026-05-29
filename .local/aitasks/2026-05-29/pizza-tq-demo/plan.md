@@ -503,9 +503,197 @@ Expected behavior:
 
 ---
 
-## Future Phases (planned separately)
+## Phase 6: Fairness Demo
 
-- **Phase 6: Fairness demo** — add `FairnessKey` to `PizzaOrder`, set on activity options, add `demo fairness` command
+The goal: flood the queue with 50 orders from Customer Alice, wait 5 seconds so the backlog builds, then submit 1 order from Customer Bob. With fairness enabled, the server puts Alice's orders in one virtual queue and Bob's in another and round-robins between them. Bob's single order should be dispatched within 1-2 seconds — not after all of Alice's remaining ~45 orders.
+
+`FairnessKey` is a field on `temporal.Priority`, set alongside `PriorityKey` in the activity options inside the workflow. All fairness demo orders use default priority (0 → server default 3) so only the fairness behavior is isolated.
+
+**Why it works:** The server creates one virtual queue per distinct `FairnessKey` within a priority tier and dispatches across them proportionally to weight. Both "alice" and "bob" default to weight 1.0, so each gets ~50% of dispatch slots. With 1 alice task dispatched per slot and 1 bob task total, Bob finishes in 1 slot rather than ~45.
+
+The same `matching.useNewMatcher=true` server flag required for priority also enables fairness.
+
+---
+
+### Task 6a: Add FairnessKey to PizzaOrder and wire it through the workflow
+
+**Files:**
+- Modify: `pizza.go`
+
+- [ ] **Step 1: Add `FairnessKey string` to `PizzaOrder` and include it in activity `Priority`**
+
+Full updated `pizza.go`:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/workflow"
+)
+
+const TaskQueue = "pizza-orders"
+
+type PizzaOrder struct {
+	OrderID     string
+	CustomerID  string
+	Item        string
+	PriorityKey int    // 1=highest priority, 5=lowest; 0 uses server default (3)
+	FairnessKey string // groups orders into a virtual queue for fair dispatch; empty = no grouping
+}
+
+func PizzaOrderWorkflow(ctx workflow.Context, order PizzaOrder) error {
+	ao := workflow.ActivityOptions{
+		StartToCloseTimeout: 60 * time.Second,
+		Priority: temporal.Priority{
+			PriorityKey: order.PriorityKey,
+			FairnessKey: order.FairnessKey,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, ao)
+	return workflow.ExecuteActivity(ctx, MakePizzaActivity, order).Get(ctx, nil)
+}
+
+func MakePizzaActivity(ctx context.Context, order PizzaOrder) error {
+	logger := activity.GetLogger(ctx)
+	logger.Info("Making pizza", "orderID", order.OrderID, "customer", order.CustomerID)
+
+	fmt.Printf("[%s] Making pizza  -- Order %-8s | Customer %-12s | %s\n",
+		time.Now().Format("15:04:05"), order.OrderID, order.CustomerID, order.Item)
+
+	//time.Sleep(3 * time.Second)
+
+	fmt.Printf("[%s] Pizza ready   -- Order %-8s | Customer %-12s\n",
+		time.Now().Format("15:04:05"), order.OrderID, order.CustomerID)
+	logger.Info("Pizza ready", "orderID", order.OrderID)
+	return nil
+}
+```
+
+Note: existing rate limit and priority demo orders have `FairnessKey: ""` which stays as the default — no behavior change for them. The `convertToPBPriority` SDK function only sends non-nil priority when at least one field is non-default, so empty `FairnessKey` + `PriorityKey 0` still sends nil (server defaults) for the rate limit demo.
+
+---
+
+### Task 6b: Add runFairnessDemo to demo.go
+
+**Files:**
+- Modify: `demo.go`
+
+- [ ] **Step 1: Append `runFairnessDemo` to the end of demo.go**
+
+```go
+// runFairnessDemo floods the queue with 50 orders from Customer Alice, waits 5 seconds
+// for the backlog to build (~45 orders still pending), then submits 1 order from Customer
+// Bob. With matching.useNewMatcher=true on the server, Alice and Bob each have their own
+// virtual queue and get equal dispatch slots. Bob's single order should start within
+// 1-2 seconds — not after all of Alice's remaining orders.
+func runFairnessDemo() {
+	c := newTemporalClient()
+	defer c.Close()
+
+	fmt.Println("=== Fairness Demo ===")
+	fmt.Println("Step 1: Flooding queue with 50 orders from Customer Alice...")
+	fmt.Println()
+	for i := 1; i <= 50; i++ {
+		submitOrder(c, PizzaOrder{
+			OrderID:     fmt.Sprintf("fair-alice-%02d", i),
+			CustomerID:  "alice",
+			Item:        "Margherita",
+			FairnessKey: "alice",
+		})
+	}
+
+	fmt.Println()
+	fmt.Println("Waiting 5 seconds for the queue to build up...")
+	time.Sleep(5 * time.Second)
+
+	fmt.Println()
+	fmt.Println("Step 2: Submitting 1 order from Customer Bob...")
+	submitOrder(c, PizzaOrder{
+		OrderID:     "fair-bob-01",
+		CustomerID:  "bob",
+		Item:        "Pepperoni",
+		FairnessKey: "bob",
+	})
+	fmt.Println()
+	fmt.Println("Bob's order submitted. Switch to the worker terminal.")
+	fmt.Println("Bob's order should start within 1-2 seconds (fairness round-robin),")
+	fmt.Println("not after all ~45 remaining Alice orders (which would take ~45 more seconds).")
+}
+```
+
+---
+
+### Task 6c: Add `demo fairness` subcommand to main.go
+
+**Files:**
+- Modify: `main.go`
+
+- [ ] **Step 1: Add `fairness` case to the demo switch**
+
+In the `demo` switch block, add after the `priority` case:
+```go
+case "fairness":
+    runFairnessDemo()
+```
+
+- [ ] **Step 2: Update the usage string**
+
+Add to the usage string:
+```
+  go run . demo fairness    Flood with Alice's orders, then show Bob jumping the queue
+```
+
+---
+
+### Task 6d: Build and verify
+
+- [ ] **Step 1: Build**
+
+```bash
+go build ./...
+```
+
+Expected: clean, no errors.
+
+---
+
+## Phase 6 Verification
+
+Requires the server running with `matching.useNewMatcher=true` (same as priority demo):
+
+```bash
+temporal server start-dev \
+  --dynamic-config-value "matching.useNewMatcher=true" \
+  --dynamic-config-value "matching.enableFairness=true"
+```
+
+- [ ] **Step 1: Start the worker**
+
+```bash
+go run . worker
+```
+
+- [ ] **Step 2: Run the fairness demo**
+
+```bash
+go run . demo fairness
+```
+
+- [ ] **Step 3: Observe worker terminal**
+
+Expected behavior:
+- Seconds 0-5: Alice's orders start at 1/second (`alice` logs appear)
+- At ~5s: Bob's order is submitted
+- Within 1-2 seconds: `bob` appears in the worker logs interleaved with `alice`
+- Bob's single order finishes; Alice's remaining ~45 orders continue at 1/second
+
+Without fairness (for comparison): Bob would appear in the logs only after all ~45 remaining Alice orders complete (~45 more seconds).
 
 ---
 

@@ -16,13 +16,17 @@ type PizzaOrder struct {
 	OrderID     string
 	CustomerID  string
 	Item        string
-	PriorityKey int // 1=highest priority, 5=lowest; 0 uses server default (3)
+	PriorityKey int    // 1=highest priority, 5=lowest; 0 uses server default (3)
+	FairnessKey string // groups orders into a virtual queue for fair dispatch; empty = no grouping
 }
 
 func PizzaOrderWorkflow(ctx workflow.Context, order PizzaOrder) error {
 	ao := workflow.ActivityOptions{
 		StartToCloseTimeout: 60 * time.Second,
-		Priority:            temporal.Priority{PriorityKey: order.PriorityKey},
+		Priority: temporal.Priority{
+			PriorityKey: order.PriorityKey,
+			FairnessKey: order.FairnessKey,
+		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 	return workflow.ExecuteActivity(ctx, MakePizzaActivity, order).Get(ctx, nil)
